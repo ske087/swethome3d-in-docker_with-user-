@@ -1,0 +1,56 @@
+name: swethome3d
+
+services:
+  # Project storage, login and user management. Only reachable through the web container.
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: swethome3d/sync:${IMAGE_TAG:-latest}
+    container_name: swethome3d-sync
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      DATA_DIR: /data
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      # Leer = beim ersten Start wird ein zufaelliges Passwort in den Logs ausgegeben.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      MAX_CONTENT_MB: ${MAX_CONTENT_MB:-1024}
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    image: swethome3d/sweet3d:${IMAGE_TAG:-latest}
+    container_name: swethome3d-web
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8180}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

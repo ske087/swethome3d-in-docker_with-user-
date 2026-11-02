@@ -1,0 +1,13 @@
+{
+  "name": "swethome3d-sync",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Project storage, authentication and user management for swethome3d",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,19 @@
+# Clone of the upstream project, created by deploy.sh
+# (`git reset --hard` + `git clean -fd` run inside it on every update)
+# Anchored to the repository root so overlay/src/ is tracked.
+/src/
+
+# Local configuration (may contain the admin password)
+/.env
+
+# Server data: projects, users, sessions, imported files
+/data/
+
+# Logs
+*.log
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
