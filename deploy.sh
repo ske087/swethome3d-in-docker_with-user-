@@ -15,26 +15,48 @@ fi
 UPSTREAM_REPO="${UPSTREAM_REPO:-https://github.com/Paul6552/sweet3D.git}"
 UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-main}"
 WEB_PORT="${WEB_PORT:-8180}"
+# The upstream clone lives outside the workspace: src/ is plain source without its own .git, so
+# the editor only ever sees this repository. Override to keep the cache elsewhere.
+CACHE_DIR="${CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/swethome3d-upstream}"
 
 compose() { docker compose "$@"; }
 
 log() { printf '\n[k] %s\n' "$*"; }
 
-ensure_src() {
-  if [ -d src/.git ]; then
+# Fetches the upstream branch into the cache clone (shallow, so updates stay small).
+ensure_upstream() {
+  if [ -d "$CACHE_DIR/.git" ]; then
     log "Actualizez sursa upstream ($UPSTREAM_BRANCH)"
-    git -C src fetch --depth 1 origin "$UPSTREAM_BRANCH"
-    git -C src checkout -q "$UPSTREAM_BRANCH"
-    git -C src reset --hard -q "origin/$UPSTREAM_BRANCH"
+    git -C "$CACHE_DIR" fetch --depth 1 --quiet origin "$UPSTREAM_BRANCH"
+    git -C "$CACHE_DIR" checkout --quiet "$UPSTREAM_BRANCH"
+    git -C "$CACHE_DIR" reset --hard --quiet "origin/$UPSTREAM_BRANCH"
   else
-    log "Clonez $UPSTREAM_REPO in ./src"
-    git clone --depth 1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" src
+    log "Clonez $UPSTREAM_REPO in cache ($CACHE_DIR)"
+    rm -rf "$CACHE_DIR"
+    mkdir -p "$(dirname "$CACHE_DIR")"
+    git clone --quiet --depth 1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" "$CACHE_DIR"
   fi
-  log "Commit: $(git -C src rev-parse --short HEAD) - $(git -C src log -1 --pretty=%s)"
+  UPSTREAM_REV="$(git -C "$CACHE_DIR" rev-parse --short HEAD)"
+  UPSTREAM_SUBJECT="$(git -C "$CACHE_DIR" log -1 --pretty=%s)"
+  log "Commit: $UPSTREAM_REV - $UPSTREAM_SUBJECT"
 }
 
-# Copies our login/dashboard/sync layer over the upstream clone. Runs after every clone/update so
-# `git reset --hard` cannot remove it. Our files stay untracked in src/ and are cleaned first.
+# Copies the tracked upstream files into src/ as plain files, so no nested repository (and no
+# "changes" in Source Control) is left behind. Skipped when the commit did not change.
+ensure_src() {
+  if [ -f src/.source-rev ] && [ "$(cat src/.source-rev)" = "$UPSTREAM_REV" ] && [ -d src/src ]; then
+    log "Sursa upstream neschimbata ($UPSTREAM_REV)"
+    return
+  fi
+  log "Copiez sursa upstream $UPSTREAM_REV in ./src"
+  rm -rf src
+  mkdir -p src
+  git -C "$CACHE_DIR" archive "$UPSTREAM_REV" | tar -x -C src
+  printf '%s\n' "$UPSTREAM_REV" > src/.source-rev
+}
+
+# Copies our login/dashboard/sync layer over the upstream source. Runs after every sync, so updated
+# upstream files overwrite the previous overlay. Files of an older overlay version are removed first.
 apply_overlay() {
   if [ ! -d overlay ]; then
     log "ATENTIE: overlay/ lipseste - aplicatia porneste fara login si fara sincronizare."
@@ -42,12 +64,18 @@ apply_overlay() {
   fi
   log "Aplic stratul local (login, dashboard, sincronizare)"
   mkdir -p data
-  git -C src clean -fd --quiet
+  (
+    cd overlay
+    find . -type f -print0 | while IFS= read -r -d '' file; do
+      rm -f "../src/${file#./}"
+    done
+  )
   cp -R overlay/. src/
 }
 
 case "${1:-up}" in
   up)
+    ensure_upstream
     ensure_src
     apply_overlay
     log "Construiesc imaginile si pornesc containerele"
@@ -56,6 +84,7 @@ case "${1:-up}" in
     log "Parola initiala de admin: ./deploy.sh logs | grep -A 5 'initial admin account'"
     ;;
   update)
+    ensure_upstream
     ensure_src
     apply_overlay
     log "Reconstruiesc imaginile (fara cache pentru dependinte)"
@@ -90,8 +119,8 @@ case "${1:-up}" in
     cat <<EOF
 Utilizare: ./deploy.sh [comanda]
 
-  up        cloneaza/actualizeaza sursa, aplica stratul local, construieste si porneste (implicit)
-  update    actualizeaza sursa, aplica stratul local si reconstruieste imaginile
+  up        aduce sursa upstream, aplica stratul local, construieste si porneste (implicit)
+  update    actualizeaza upstream, aplica stratul local si reconstruieste imaginile
   overlay   aplica doar stratul local in src/ (fara reconstruire)
   restart   reporneste containerele
   stop      opreste containerele
@@ -99,6 +128,10 @@ Utilizare: ./deploy.sh [comanda]
   logs      urmareste logurile (web + sync server)
   status    starea containerelor
   passwd    parola noua pentru admin (sau pentru utilizatorul dat): ./deploy.sh passwd [user]
+
+Sursa upstream este clonata in $CACHE_DIR, nu in acest proiect. In src/ ajung doar
+fisierele sursa (fara .git), peste care se copiaza overlay/. Asa editorul vede un singur
+repository: acesta. Sterge cache-ul doar daca vrei sa reclonezi de la zero.
 
 Datele (proiecte, utilizatori, fisiere importate) sunt in ./data si supravietuiesc actualizarilor.
 EOF
