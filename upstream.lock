@@ -1,0 +1,5 @@
+# Upstream commit this deployment is pinned to.
+# Only the upgrade command changes it; it rolls back when the build fails.
+UPSTREAM_REPO=https://github.com/Paul6552/sweet3D.git
+UPSTREAM_BRANCH=main
+UPSTREAM_COMMIT=f0f1bed218a082b365b4455a033bd2c8342898b4

@@ -160,6 +160,10 @@ http://<server-ip>:8180
 
 > 💡 Set `ADMIN_PASSWORD` in `.env` to choose the password yourself, or run
 > `./deploy.sh passwd` at any time to generate a new one.
+>
+> 🔒 The upstream commit is pinned in [`upstream.lock`](upstream.lock). See
+> [Why is the upstream commit pinned?](#design-decisions) — upstream changes are
+> only picked up by an explicit `./deploy.sh upgrade`.
 
 ---
 
@@ -307,8 +311,10 @@ Apply changes with `docker compose up -d`.
 
 | Command | Effect |
 | --- | --- |
-| `./deploy.sh up` | Clone/update, apply overlay, build, start *(default)* |
-| `./deploy.sh update` | Fetch the latest upstream commit, apply overlay, rebuild |
+| `./deploy.sh up` | Build and start from the **pinned** upstream commit, apply overlay *(default)* |
+| `./deploy.sh update` | Rebuild the images from the pinned commit (does not change upstream) |
+| `./deploy.sh upgrade [ref]` | Move the pin to the latest upstream commit (or `ref`); rolls back if the build fails |
+| `./deploy.sh pin` | Show the pinned repository, branch, commit and subject |
 | `./deploy.sh overlay` | Copy `overlay/` into `src/` only (no rebuild) |
 | `./deploy.sh passwd [user]` | Generate a new password, end that user's sessions |
 | `./deploy.sh logs` | Follow the logs of both containers |
@@ -372,6 +378,7 @@ and readable without this application.
 swethome3d-in-docker_with-user-/
 ├── docker-compose.yml    # web (nginx) + server (sync/auth)
 ├── deploy.sh             # clone, overlay, build, start
+├── upstream.lock         # pinned upstream commit (see Design decisions)
 ├── .env.example          # configuration template
 ├── README.md
 ├── LICENSE               # MIT (upstream + this fork)
@@ -413,7 +420,34 @@ commit could have landed in the upstream history. `deploy.sh` now clones into
 `$CACHE_DIR` (default `~/.cache/swethome3d-upstream`), exports the tracked files
 with `git archive` into `src/` and records the commit in `src/.source-rev`. The
 cache keeps the shallow clone for fast incremental updates and can be deleted at
-any time — the next `update` clones it again.
+any time — the next run clones it again.
+
+**Why is the upstream commit pinned?**
+Upstream changes at its own pace and `overlay/` replaces files that the login and
+sync layer depends on (`router.tsx`, `storage/projects.ts`, `storage/contents.ts`,
+`nginx.conf`). Tracking `main` would mean that a `deploy.sh up` on a Tuesday could
+silently break the login page after an unrelated upstream refactor.
+
+`upstream.lock` therefore records the exact commit:
+
+```
+UPSTREAM_REPO=https://github.com/Paul6552/sweet3D.git
+UPSTREAM_BRANCH=main
+UPSTREAM_COMMIT=f0f1bed218a082b365b4455a033bd2c8342898b4
+```
+
+Consequences:
+
+- `up` and `update` build **exactly** this commit, from the local cache and
+  even without network access — the same revision is reproducible.
+- Nothing moves the pin implicitly. `./deploy.sh upgrade` is the only command
+  that does, and it lists the overlay files that changed upstream so you know
+  what to re-check.
+- `upgrade` writes the new pin only after `docker compose build` succeeded;
+  on failure it restores the previous commit, so a broken upstream update can
+  never reach a running deployment.
+- To move to a specific tag or commit: `./deploy.sh upgrade v7.6` or
+  `./deploy.sh upgrade <sha>`.
 
 **Why local-first instead of server-first?**
 The editor relies on synchronous local reads for undo/redo and for detached
@@ -448,6 +482,8 @@ there is no supply-chain surface and no `npm audit` noise.
 | **Sign-in stopped working** | Reset the password: `./deploy.sh passwd`. |
 | **Password reset has no effect** | Only on very old images — the server now reloads `users.json` when it changes. |
 | **"Saved locally only" never clears** | Check the server: `docker compose ps`, `docker compose logs server`. Then click the badge. |
+| **Login or dashboard broken after an upgrade** | Go back to the previous pin: `./deploy.sh upgrade <old-sha>` (the old value is in the git history of `upstream.lock`), or restore it with `git checkout HEAD~1 -- upstream.lock && ./deploy.sh update`. |
+| **Want to stay on a known-good upstream** | Nothing to do — that is the default. `up`/`update` never fetch new upstream commits. |
 | **Imported models missing on the second PC** | The first upload must have finished (watch `data/contents/`). Check the badge, then reopen the project. |
 | **`413 Payload Too Large`** | Raise `MAX_CONTENT_MB` and `client_max_body_size` in `nginx.conf`, then rebuild. |
 | **Port already in use** | Change `WEB_PORT` in `.env`, then `docker compose up -d`. |
